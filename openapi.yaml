@@ -1,0 +1,66 @@
+openapi: 3.1.0
+info:
+  title: La Mascotera · Bridge Dux
+  version: "1.0.0"
+servers:
+  - url: https://TU-DOMINIO-API
+paths:
+  /duxc/items:
+    get:
+      operationId: buscar_items
+      summary: Lista items (precio y stock) desde Dux
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+  /duxc/pedido:
+    post:
+      operationId: crear_pedido
+      summary: Crea un pedido en Dux
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [clienteId, items]
+              properties:
+                clienteId: { type: integer }
+                observaciones: { type: string }
+                externalId: { type: string, description: "Para idempotencia" }
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required: [itemId, cantidad]
+                    properties:
+                      itemId: { type: integer }
+                      cantidad: { type: number }
+                      precio: { type: number }
+      responses:
+        "200":
+          description: Pedido creado
+          content:
+            application/json:
+              schema:
+                type: object
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+security:
+  - ApiKeyAuth: []
