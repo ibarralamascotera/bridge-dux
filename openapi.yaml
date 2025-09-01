@@ -6,6 +6,26 @@ info:
 servers:
   - url: https://bridge-dux.onrender.com
 
+tags:
+  - name: Salud
+    description: Endpoints de salud del servicio
+  - name: Items
+    description: Consultas y mantenimiento de artículos
+  - name: Ventas
+    description: Pedidos, facturas y notas
+  - name: Compras
+    description: Consultas de compras
+  - name: Stock
+    description: Movimientos y ajustes de stock
+  - name: Finanzas
+    description: Cobranzas y pagos
+  - name: Maestros
+    description: Tablas maestras (rubros, subrubros, listas, etc.)
+  - name: Sucursales
+    description: Sucursales y depósitos
+  - name: Auxiliar
+    description: Endpoints auxiliares/estado
+
 security:
   - ApiKeyAuth: []
 
@@ -15,6 +35,44 @@ components:
       type: apiKey
       in: header
       name: Authorization
+
+  parameters:
+    LimitParam:
+      in: query
+      name: limit
+      schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+      description: Cantidad de registros por página.
+    OffsetParam:
+      in: query
+      name: offset
+      schema: { type: integer, default: 0, minimum: 0 }
+      description: Desplazamiento (salto) de página.
+    BuscarParam:
+      in: query
+      name: buscar
+      schema: { type: string }
+      description: Texto de búsqueda opcional.
+    FechaDesdeParam:
+      in: query
+      name: fechaDesde
+      schema: { type: string }
+      description: Fecha desde (formato según Dux).
+    FechaHastaParam:
+      in: query
+      name: fechaHasta
+      schema: { type: string }
+      description: Fecha hasta (formato según Dux).
+    IdEmpresaParam:
+      in: query
+      name: idEmpresa
+      schema: { type: integer }
+      description: ID de empresa Dux.
+    IdempotencyParam:
+      in: header
+      name: Idempotency-Key
+      required: false
+      schema: { type: string }
+      description: Clave única para idempotencia del lado del bridge.
 
   schemas:
     DuxOk:
@@ -57,10 +115,33 @@ components:
               precio:
                 type: number
 
+    DuxGenericBody:
+      type: object
+      description: "Cuerpo genérico passthrough hacia Dux"
+      additionalProperties: true
+
+    ItemsCompactResponse:
+      type: object
+      properties:
+        paging:
+          type: object
+          additionalProperties: true
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              cod_item: { type: string }
+              item: { type: string }
+              precio_lista: { type: number, nullable: true }
+              stock_total: { type: number }
+
 paths:
+  # ---------- Salud ----------
   /health:
     get:
       operationId: health
+      tags: [Salud]
       summary: Healthcheck (sin auth)
       security: []
       responses:
@@ -74,24 +155,16 @@ paths:
                   ok:
                     type: boolean
 
+  # ---------- Items ----------
   /duxc/items:
     get:
       operationId: buscar_items
       tags: [Items]
       summary: Lista items desde Dux (paginado)
       parameters:
-        - in: query
-          name: limit
-          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
-          description: Cantidad de registros por página.
-        - in: query
-          name: offset
-          schema: { type: integer, default: 0, minimum: 0 }
-          description: Desplazamiento (salto) de página.
-        - in: query
-          name: buscar
-          schema: { type: string }
-          description: Texto de búsqueda opcional.
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+        - $ref: "#/components/parameters/BuscarParam"
       responses:
         "200":
           description: OK
@@ -112,28 +185,22 @@ paths:
               schema:
                 $ref: "#/components/schemas/DuxError"
 
-  /duxc/facturas:
+  /duxc/items/compact:
     get:
-      operationId: listar_facturas
-      tags: [Ventas]
-      summary: Lista facturas
+      operationId: buscar_items_compact
+      tags: [Items]
+      summary: Lista items (payload reducido, apto para Actions)
       parameters:
-        - in: query
-          name: fechaDesde
-          schema: { type: string }
-        - in: query
-          name: fechaHasta
-          schema: { type: string }
-        - in: query
-          name: idEmpresa
-          schema: { type: integer }
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+        - $ref: "#/components/parameters/BuscarParam"
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/DuxOk"
+                $ref: "#/components/schemas/ItemsCompactResponse"
         "4XX":
           description: Error del cliente
           content:
@@ -147,11 +214,44 @@ paths:
               schema:
                 $ref: "#/components/schemas/DuxError"
 
+  /duxc/items/modificar:
+    post:
+      operationId: modificar_item
+      tags: [Items]
+      summary: Crea o modifica un item en Dux
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DuxGenericBody"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+        "4XX":
+          description: Error del cliente
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxError" }
+        "5XX":
+          description: Error del servidor
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxError" }
+
+  # ---------- Ventas ----------
   /duxc/pedido:
     post:
       operationId: crear_pedido
       tags: [Ventas]
       summary: Crea un pedido en Dux
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyParam"
       requestBody:
         required: true
         content:
@@ -169,11 +269,440 @@ paths:
           description: Error del cliente
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/DuxError"
+              schema: { $ref: "#/components/schemas/DuxError" }
         "5XX":
           description: Error del servidor
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/DuxError"
+              schema: { $ref: "#/components/schemas/DuxError" }
+
+  /duxc/factura:
+    post:
+      operationId: crear_factura
+      tags: [Ventas]
+      summary: Crea una factura en Dux
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DuxGenericBody" }
+      responses:
+        "200":
+          description: Creado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+        "4XX":
+          description: Error del cliente
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxError" }
+        "5XX":
+          description: Error del servidor
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxError" }
+
+  /duxc/nota-credito:
+    post:
+      operationId: crear_nota_credito
+      tags: [Ventas]
+      summary: Crea una nota de crédito en Dux
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DuxGenericBody" }
+      responses:
+        "200":
+          description: Creado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+
+  /duxc/nota-debito:
+    post:
+      operationId: crear_nota_debito
+      tags: [Ventas]
+      summary: Crea una nota de débito en Dux
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DuxGenericBody" }
+      responses:
+        "200":
+          description: Creado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+
+  /duxc/facturas:
+    get:
+      operationId: listar_facturas
+      tags: [Ventas]
+      summary: Lista facturas
+      parameters:
+        - $ref: "#/components/parameters/FechaDesdeParam"
+        - $ref: "#/components/parameters/FechaHastaParam"
+        - $ref: "#/components/parameters/IdEmpresaParam"
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+
+  /duxc/pedidos:
+    get:
+      operationId: listar_pedidos
+      tags: [Ventas]
+      summary: Lista pedidos
+      parameters:
+        - $ref: "#/components/parameters/FechaDesdeParam"
+        - $ref: "#/components/parameters/FechaHastaParam"
+        - $ref: "#/components/parameters/IdEmpresaParam"
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+
+  # ---------- Compras ----------
+  /duxc/compras:
+    get:
+      operationId: listar_compras
+      tags: [Compras]
+      summary: Lista compras
+      parameters:
+        - $ref: "#/components/parameters/FechaDesdeParam"
+        - $ref: "#/components/parameters/FechaHastaParam"
+        - $ref: "#/components/parameters/IdEmpresaParam"
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+
+  # ---------- Stock ----------
+  /duxc/ajuste-stock:
+    post:
+      operationId: crear_ajuste_stock
+      tags: [Stock]
+      summary: Crea un ajuste de stock en Dux
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DuxGenericBody" }
+      responses:
+        "200":
+          description: Creado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+
+  /duxc/movimiento-stock:
+    post:
+      operationId: crear_movimiento_stock
+      tags: [Stock]
+      summary: Crea un movimiento de stock en Dux
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DuxGenericBody" }
+      responses:
+        "200":
+          description: Creado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+
+  # ---------- Finanzas ----------
+  /duxc/cobranza:
+    post:
+      operationId: crear_cobranza
+      tags: [Finanzas]
+      summary: Crea una cobranza en Dux
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DuxGenericBody" }
+      responses:
+        "200":
+          description: Creado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+
+  /duxc/pago:
+    post:
+      operationId: crear_pago
+      tags: [Finanzas]
+      summary: Crea un pago en Dux
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DuxGenericBody" }
+      responses:
+        "200":
+          description: Creado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+
+  # ---------- Maestros ----------
+  /duxc/rubros:
+    get:
+      operationId: listar_rubros
+      tags: [Maestros]
+      summary: Lista rubros
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+        - $ref: "#/components/parameters/BuscarParam"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+
+  /duxc/subrubros:
+    get:
+      operationId: listar_subrubros
+      tags: [Maestros]
+      summary: Lista subrubros
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+        - $ref: "#/components/parameters/BuscarParam"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+
+  /duxc/listas-precio-venta:
+    get:
+      operationId: listar_listas_precio_venta
+      tags: [Maestros]
+      summary: Lista de precios de venta
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+
+  /duxc/localidades:
+    get:
+      operationId: listar_localidades
+      tags: [Maestros]
+      summary: Lista localidades
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+        - $ref: "#/components/parameters/BuscarParam"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+
+  /duxc/provincias:
+    get:
+      operationId: listar_provincias
+      tags: [Maestros]
+      summary: Lista provincias
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+
+  /duxc/percepciones:
+    get:
+      operationId: listar_percepciones
+      tags: [Maestros]
+      summary: Lista percepciones/impuestos
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+
+  /duxc/personal:
+    get:
+      operationId: listar_personal
+      tags: [Maestros]
+      summary: Lista personal
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+        - $ref: "#/components/parameters/BuscarParam"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+
+  /duxc/empresas:
+    get:
+      operationId: listar_empresas
+      tags: [Maestros]
+      summary: Lista empresas
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+
+  # ---------- Sucursales / Depósitos ----------
+  /duxc/sucursales:
+    get:
+      operationId: listar_sucursales
+      tags: [Sucursales]
+      summary: Lista sucursales
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+
+  /duxc/depositos:
+    get:
+      operationId: listar_depositos
+      tags: [Sucursales]
+      summary: Lista depósitos
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+
+  /duxc/remito:
+    post:
+      operationId: crear_remito
+      tags: [Sucursales]
+      summary: Crea un remito (entrega)
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DuxGenericBody" }
+      responses:
+        "200":
+          description: Creado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+
+  /duxc/transferencia:
+    post:
+      operationId: crear_transferencia
+      tags: [Sucursales]
+      summary: Crea transferencia entre depósitos
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DuxGenericBody" }
+      responses:
+        "200":
+          description: Creado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+
+  # ---------- Auxiliar / Estado ----------
+  /duxc/factura/estado:
+    get:
+      operationId: estado_factura
+      tags: [Auxiliar]
+      summary: Consulta estado de job de factura
+      parameters:
+        - in: query
+          name: id
+          required: true
+          schema: { type: string }
+          description: ID del job/operación a consultar
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
+
+  /duxc/items/estado:
+    get:
+      operationId: estado_items
+      tags: [Auxiliar]
+      summary: Consulta estado de job de items
+      parameters:
+        - in: query
+          name: id
+          required: true
+          schema: { type: string }
+          description: ID del job/operación a consultar
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuxOk" }
