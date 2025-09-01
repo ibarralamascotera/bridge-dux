@@ -6,6 +6,22 @@ import axios from 'axios';
 import PQueue from 'p-queue';
 import fs from 'fs';
 
+const DUX_PATHS = {
+  items: '/items',
+  compras: '/compras',
+  depositos: '/depositos',        // antes estaba '/deposito'
+  empresas: '/empresas',
+  facturas: '/facturas',
+  pedidos: '/pedidos',
+  listasPrecioVenta: '/listaprecioventa',
+  localidades: '/localidades',    // antes estaba '/localidad'
+  percepciones: '/percepcionesImpuestos',
+  personal: '/personal',
+  provincias: '/provincias',
+  rubros: '/rubros',
+  subrubros: '/subrubros',
+  sucursales: '/sucursales',      // antes estaba '/sucursal'
+};
 
 const app = express();
 const idemStore = new Map(); // key -> resultado
@@ -61,9 +77,6 @@ if (!API_KEY)  console.warn('[WARN] Falta API_KEY en .env');
 if (!DUX_TOKEN) console.warn('[WARN] Falta DUX_TOKEN en .env');
 
 
-// === Middlewares ===
-app.use(express.json({ limit: '1mb' }));
-app.use(morgan('tiny'));
 
 // === Rutas públicas (no requieren API_KEY) ===
 app.get('/', (_req, res) => res.json({ name: 'Bridge Dux', base: DUX_BASE, ok: true }));
@@ -198,20 +211,21 @@ function makeGetProxy(localPath, duxPath) {
 
 // === Endpoints GET (consulta) ===
 // Usá query params tal cual los pida Dux. Ej: ?offset=0&limit=20
-makeGetProxy('/duxc/items',               '/items');
-makeGetProxy('/duxc/compras',             '/compras');
-makeGetProxy('/duxc/depositos',           '/deposito');
-makeGetProxy('/duxc/empresas',            '/empresas');
-makeGetProxy('/duxc/facturas',            '/facturas');
-makeGetProxy('/duxc/pedidos',             '/pedidos');
-makeGetProxy('/duxc/listas-precio-venta', '/listaprecioventa');
-makeGetProxy('/duxc/localidades',         '/localidad');
-makeGetProxy('/duxc/percepciones',        '/percepcionesImpuestos');
-makeGetProxy('/duxc/personal',            '/personal');
-makeGetProxy('/duxc/provincias',          '/provincias');
-makeGetProxy('/duxc/rubros',              '/rubros');
-makeGetProxy('/duxc/subrubros',           '/subrubros');
-makeGetProxy('/duxc/sucursales',          '/sucursal');
+makeGetProxy('/duxc/items',               DUX_PATHS.items);
+makeGetProxy('/duxc/compras',             DUX_PATHS.compras);
+makeGetProxy('/duxc/depositos',           DUX_PATHS.depositos);
+makeGetProxy('/duxc/empresas',            DUX_PATHS.empresas);
+makeGetProxy('/duxc/facturas',            DUX_PATHS.facturas);
+makeGetProxy('/duxc/pedidos',             DUX_PATHS.pedidos);
+makeGetProxy('/duxc/listas-precio-venta', DUX_PATHS.listasPrecioVenta);
+makeGetProxy('/duxc/localidades',         DUX_PATHS.localidades);
+makeGetProxy('/duxc/percepciones',        DUX_PATHS.percepciones);
+makeGetProxy('/duxc/personal',            DUX_PATHS.personal);
+makeGetProxy('/duxc/provincias',          DUX_PATHS.provincias);
+makeGetProxy('/duxc/rubros',              DUX_PATHS.rubros);
+makeGetProxy('/duxc/subrubros',           DUX_PATHS.subrubros);
+makeGetProxy('/duxc/sucursales',          DUX_PATHS.sucursales);
+
 
 // === Endpoints de estado de jobs (si Dux los expone así) ===
 makeGetProxy('/duxc/factura/estado',      '/obtenerEstadoFactura');
@@ -311,22 +325,6 @@ app.post('/duxc/items/modificar', async (req, res) => {
   }
 });
 
-// Pedido
-app.post('/duxc/pedido', async (req, res) => {
-  const key = req.headers['idempotency-key'] || req.body?.externalId;
-  try {
-    const payload = req.body;
-    if (!payload.clienteId || !Array.isArray(payload.items) || payload.items.length === 0) {
-      return res.status(400).json({ error: 'Faltan campos: clienteId, items[]' });
-    }
-    const resultado = await withIdempotency(key, () =>
-      callDux('/pedido/nuevopedido', { method: 'POST', data: payload })
-    );
-    res.json(resultado);
-  } catch (e) {
-    res.status(502).json({ error: 'Error creando pedido', detail: e.message });
-  }
-});
 
 
 // Nota de Crédito
