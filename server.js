@@ -60,9 +60,36 @@ const DUX_TOKEN = process.env.DUX_TOKEN; // token de Dux (va en header "authoriz
 if (!API_KEY)  console.warn('[WARN] Falta API_KEY en .env');
 if (!DUX_TOKEN) console.warn('[WARN] Falta DUX_TOKEN en .env');
 
+
 // === Middlewares ===
 app.use(express.json({ limit: '1mb' }));
 app.use(morgan('tiny'));
+
+// === Rutas públicas (no requieren API_KEY) ===
+app.get('/', (_req, res) => res.json({ name: 'Bridge Dux', base: DUX_BASE, ok: true }));
+app.get('/health', (_req, res) => res.json({ ok: true }));
+app.get('/openapi.yaml', (_req, res) => {
+  try {
+    const file = fs.readFileSync('./openapi.yaml', 'utf8');
+    res.setHeader('Content-Type', 'text/yaml');
+    res.send(file);
+  } catch {
+    res.status(404).send('# openapi.yaml no encontrado');
+  }
+});
+
+// === Middleware de auth (se aplica a lo demás) ===
+app.use((req, res, next) => {
+  const auth = req.headers.authorization || '';
+  if (!auth.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Falta Authorization' });
+  }
+  const key = auth.replace('Bearer ', '').trim();
+  if (key !== API_KEY) {
+    return res.status(403).json({ error: 'API Key inválida' });
+  }
+  next();
+});
 
 // === Auth del Backend (Bearer API Key) ===
 // Requiere: Authorization: Bearer <API_KEY>
