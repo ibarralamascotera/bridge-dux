@@ -217,6 +217,23 @@ makeGetProxy('/duxc/sucursales',          '/sucursal');
 makeGetProxy('/duxc/factura/estado',      '/obtenerEstadoFactura');
 makeGetProxy('/duxc/items/estado',        '/obtenerEstadoItems');
 
+// justo debajo de makeGetProxy(...)
+app.get('/duxc/items', async (req, res) => {
+  try {
+    const limit  = Number(req.query.limit)  || 20;  // seguro para Actions
+    const offset = Number(req.query.offset) || 0;
+
+    const data = await callDux('/items', {
+      method: 'GET',
+      params: { ...req.query, limit, offset }
+    });
+
+    res.json(data);
+  } catch (e) {
+    res.status(502).json({ error: 'Error consultando Dux /items', detail: e.message });
+  }
+});
+
 // === Endpoints POST (operaciones) ===
 // Idempotencia simple en memoria para externalId (en prod: Redis/DB)
 const seenExternalIds = new Set();
