@@ -2,33 +2,12 @@ openapi: 3.1.0
 info:
   title: La Mascotera · Bridge Dux
   version: "1.0.0"
-  description: |
-    Puente HTTP entre ChatGPT Actions y Dux Software.
-    Autenticación del bridge: `Authorization: Bearer <API_KEY>` (clave del bridge).
-    El bridge llama a Dux con header `authorization: <DUX_TOKEN>`.
 
 servers:
-  - url: https://TU-DOMINIO-API
-    description: Producción
-  - url: http://localhost:3000
-    description: Local
+  - url: https://bridge-dux.onrender.com
 
 security:
   - ApiKeyAuth: []
-
-tags:
-  - name: Items
-    description: Consulta y mantenimiento de artículos
-  - name: Ventas · Pedidos
-    description: Creación y consulta de pedidos
-  - name: Ventas · Facturación
-    description: Facturas y notas de crédito/débito
-  - name: Stock
-    description: Ajustes, movimientos, remitos, transferencias
-  - name: Maestros
-    description: Provincias, localidades, sucursales, listas, etc.
-  - name: Utilidades
-    description: Estados de jobs, health, documentación
 
 components:
   securitySchemes:
@@ -36,120 +15,97 @@ components:
       type: apiKey
       in: header
       name: Authorization
-      description: Usar formato `Bearer <API_KEY>`
-  parameters:
-    Offset: { in: query, name: offset, schema: { type: integer, minimum: 0, default: 0 } }
-    Limit:  { in: query, name: limit,  schema: { type: integer, minimum: 1, maximum: 200, default: 20 } }
-    IdempotencyKey:
-      in: header
-      name: Idempotency-Key
-      required: false
-      schema: { type: string }
-      description: Clave idempotente opcional (también se acepta `externalId` en el body).
+
   schemas:
-    Problem:
+    DuxOk:
       type: object
-      properties:
-        type:      { type: string, format: uri, example: about:blank }
-        title:     { type: string, example: Error creando factura }
-        status:    { type: integer, example: 502 }
-        detail:    { type: string, example: DUX 429: No autorizado }
-        instance:  { type: string, example: /duxc/factura }
-        requestId: { type: string, example: 01J9X… }
-      required: [title, status]
-    PedidoItem:
+      description: "Respuesta passthrough desde Dux"
+      properties: {}
+      additionalProperties: true
+
+    DuxError:
       type: object
-      required: [itemId, cantidad]
+      description: "Formato de error del bridge"
       properties:
-        itemId:   { type: integer }
-        cantidad: { type: number }
-        precio:   { type: number, nullable: true }
+        error:
+          type: string
+        detail:
+          type: string
+      additionalProperties: true
+
     CrearPedidoBody:
       type: object
       required: [clienteId, items]
       properties:
-        clienteId:     { type: integer }
-        observaciones: { type: string, nullable: true }
-        externalId:    { type: string, description: Clave idempotente alternativa al header }
+        clienteId:
+          type: integer
+        observaciones:
+          type: string
+        externalId:
+          type: string
+          description: "Idempotencia: clave única del pedido"
         items:
           type: array
-          items: { $ref: '#/components/schemas/PedidoItem' }
+          items:
+            type: object
+            required: [itemId, cantidad]
+            properties:
+              itemId:
+                type: integer
+              cantidad:
+                type: number
+              precio:
+                type: number
 
 paths:
+  /health:
+    get:
+      operationId: health
+      summary: Healthcheck (sin auth)
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
 
-  #######################
-  #        ITEMS        #
-  #######################
   /duxc/items:
     get:
+      operationId: buscar_items
       tags: [Items]
-      operationId: dux_listar_items
-      summary: Lista items (precio/stock) desde Dux
-      parameters:
-        - $ref: '#/components/parameters/Offset'
-        - $ref: '#/components/parameters/Limit'
-        - in: query
-          name: filtro
-          schema: { type: string }
+      summary: Lista items desde Dux
+      description: Devuelve el JSON tal cual responde Dux. Acepta query params de Dux como `offset`, `limit`, `buscar`, etc.
       responses:
-        '200': { description: OK, content: { application/json: { schema: { type: object } } } }
-        default: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DuxOk"
+        "4XX":
+          description: Error del cliente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DuxError"
+        "5XX":
+          description: Error del servidor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DuxError"
 
-  /duxc/items/modificar:
-    post:
-      tags: [Items]
-      operationId: dux_upsert_item
-      summary: Crea o modifica un item
-      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
-      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
-      responses:
-        '200': { description: OK, content: { application/json: { schema: { type: object } } } }
-        default: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
-
-  #############################
-  #     VENTAS · PEDIDOS      #
-  #############################
-  /duxc/pedidos:
-    get:
-      tags: [Ventas · Pedidos]
-      operationId: dux_listar_pedidos
-      summary: Lista pedidos
-      parameters:
-        - $ref: '#/components/parameters/Offset'
-        - $ref: '#/components/parameters/Limit'
-        - in: query
-          name: estado
-          schema: { type: string }
-      responses:
-        '200': { description: OK, content: { application/json: { schema: { type: object } } } }
-        default: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
-
-  /duxc/pedido:
-    post:
-      tags: [Ventas · Pedidos]
-      operationId: dux_crear_pedido
-      summary: Crea un pedido en Dux
-      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/CrearPedidoBody' }
-      responses:
-        '200': { description: Pedido creado, content: { application/json: { schema: { type: object } } } }
-        default: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
-
-  ################################
-  #   VENTAS · FACTURACIÓN       #
-  ################################
   /duxc/facturas:
     get:
-      tags: [Ventas · Facturación]
-      operationId: dux_listar_facturas
+      operationId: listar_facturas
+      tags: [Ventas]
       summary: Lista facturas
       parameters:
-        - $ref: '#/components/parameters/Offset'
-        - $ref: '#/components/parameters/Limit'
         - in: query
           name: fechaDesde
           schema: { type: string }
@@ -157,161 +113,55 @@ paths:
           name: fechaHasta
           schema: { type: string }
         - in: query
-          name: idCliente
+          name: idEmpresa
           schema: { type: integer }
       responses:
-        '200': { description: OK, content: { application/json: { schema: { type: object } } } }
-        default: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DuxOk"
+        "4XX":
+          description: Error del cliente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DuxError"
+        "5XX":
+          description: Error del servidor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DuxError"
 
-  /duxc/factura:
+  /duxc/pedido:
     post:
-      tags: [Ventas · Facturación]
-      operationId: dux_crear_factura
-      summary: Crea una factura en Dux
-      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
-      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      operationId: crear_pedido
+      tags: [Ventas]
+      summary: Crea un pedido en Dux
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CrearPedidoBody"
       responses:
-        '200': { description: OK, content: { application/json: { schema: { type: object } } } }
-        default: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
-
-  /duxc/nota-credito:
-    post:
-      tags: [Ventas · Facturación]
-      operationId: dux_crear_nota_credito
-      summary: Crea una nota de crédito
-      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
-      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
-      responses:
-        '200': { description: OK, content: { application/json: { schema: { type: object } } } }
-        default: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
-
-  /duxc/nota-debito:
-    post:
-      tags: [Ventas · Facturación]
-      operationId: dux_crear_nota_debito
-      summary: Crea una nota de débito
-      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
-      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
-      responses:
-        '200': { description: OK, content: { application/json: { schema: { type: object } } } }
-        default: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
-
-  ###############
-  #    STOCK    #
-  ###############
-  /duxc/ajuste-stock:
-    post:
-      tags: [Stock]
-      operationId: dux_ajuste_stock
-      summary: Realiza un ajuste de stock
-      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
-      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
-      responses:
-        '200': { description: OK, content: { application/json: { schema: { type: object } } } }
-        default: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
-
-  /duxc/movimiento-stock:
-    post:
-      tags: [Stock]
-      operationId: dux_movimiento_stock
-      summary: Registra un movimiento de stock
-      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
-      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
-      responses:
-        '200': { description: OK, content: { application/json: { schema: { type: object } } } }
-        default: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
-
-  /duxc/remito:
-    post:
-      tags: [Stock]
-      operationId: dux_crear_remito
-      summary: Crea un remito
-      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
-      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
-      responses:
-        '200': { description: OK, content: { application/json: { schema: { type: object } } } }
-        default: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
-
-  /duxc/transferencia:
-    post:
-      tags: [Stock]
-      operationId: dux_transferir_depositos
-      summary: Transfiere stock entre depósitos
-      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
-      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
-      responses:
-        '200': { description: OK, content: { application/json: { schema: { type: object } } } }
-        default: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
-
-  ################
-  #   MAESTROS   #
-  ################
-  /duxc/depositos:
-    get: { tags: [Maestros], operationId: dux_listar_depositos, summary: Lista depósitos, responses: { '200': { description: OK, content: { application/json: { schema: { type: object } } } }, default: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } } } }
-  /duxc/empresas:
-    get: { tags: [Maestros], operationId: dux_listar_empresas, summary: Lista empresas, responses: { '200': { description: OK, content: { application/json: { schema: { type: object } } } }, default: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } } } }
-  /duxc/listas-precio-venta:
-    get: { tags: [Maestros], operationId: dux_listar_listas_precio, summary: Lista de precios de venta, responses: { '200': { description: OK, content: { application/json: { schema: { type: object } } } }, default: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } } } }
-  /duxc/localidades:
-    get:
-      tags: [Maestros]
-      operationId: dux_listar_localidades
-      summary: Lista localidades
-      parameters:
-        - in: query
-          name: provinciaId
-          schema: { type: integer }
-      responses:
-        '200': { description: OK, content: { application/json: { schema: { type: object } } } }
-        default: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
-  /duxc/percepciones:
-    get: { tags: [Maestros], operationId: dux_listar_percepciones, summary: Lista percepciones/impuestos, responses: { '200': { description: OK, content: { application/json: { schema: { type: object } } } }, default: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } } } }
-  /duxc/personal:
-    get: { tags: [Maestros], operationId: dux_listar_personal, summary: Lista personal, responses: { '200': { description: OK, content: { application/json: { schema: { type: object } } } }, default: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } } } }
-  /duxc/provincias:
-    get: { tags: [Maestros], operationId: dux_listar_provincias, summary: Lista provincias, responses: { '200': { description: OK, content: { application/json: { schema: { type: object } } } }, default: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } } } }
-  /duxc/rubros:
-    get: { tags: [Maestros], operationId: dux_listar_rubros, summary: Lista rubros, responses: { '200': { description: OK, content: { application/json: { schema: { type: object } } } }, default: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } } } }
-  /duxc/subrubros:
-    get:
-      tags: [Maestros]
-      operationId: dux_listar_subrubros
-      summary: Lista subrubros
-      parameters:
-        - in: query
-          name: rubroId
-          schema: { type: integer }
-      responses:
-        '200': { description: OK, content: { application/json: { schema: { type: object } } } }
-        default: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
-
-  #################
-  #  UTILIDADES   #
-  #################
-  /duxc/factura/estado:
-    get:
-      tags: [Utilidades]
-      operationId: dux_estado_factura
-      summary: Consulta estado de facturación asíncrona
-      parameters:
-        - in: query
-          name: jobId
-          required: true
-          schema: { type: string }
-      responses:
-        '200': { description: OK, content: { application/json: { schema: { type: object } } } }
-        default: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
-
-  /duxc/items/estado:
-    get:
-      tags: [Utilidades]
-      operationId: dux_estado_items
-      summary: Consulta estado de actualización de items
-      parameters:
-        - in: query
-          name: jobId
-          required: true
-          schema: { type: string }
-      responses:
-        '200': { description: OK, content: { application/json: { schema: { type: object } } } }
-        default: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        "200":
+          description: Creado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DuxOk"
+        "4XX":
+          description: Error del cliente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DuxError"
+        "5XX":
+          description: Error del servidor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DuxError"
