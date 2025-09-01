@@ -78,8 +78,20 @@ paths:
     get:
       operationId: buscar_items
       tags: [Items]
-      summary: Lista items desde Dux
-      description: Devuelve el JSON tal cual responde Dux. Acepta query params de Dux como `offset`, `limit`, `buscar`, etc.
+      summary: Lista items desde Dux (paginado)
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+          description: Cantidad de registros por página.
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0, minimum: 0 }
+          description: Desplazamiento (salto) de página.
+        - in: query
+          name: buscar
+          schema: { type: string }
+          description: Texto de búsqueda opcional.
       responses:
         "200":
           description: OK
