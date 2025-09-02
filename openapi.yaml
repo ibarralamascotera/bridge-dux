@@ -202,7 +202,6 @@ paths:
           content:
             application/json: { schema: { $ref: "#/components/schemas/DuxOk" } }
 
-  paths:
   /duxc/pedidos:
     get:
       operationId: listar_pedidos
@@ -411,6 +410,65 @@ paths:
           description: OK
           content:
             application/json: { schema: { $ref: "#/components/schemas/DuxOk" } }
+            
+  /analytics/top-vendidos:
+    get:
+      operationId: analytics_top_vendidos
+      tags: [Analytics]
+      summary: Top productos vendidos (agregado en el bridge)
+      parameters:
+        - in: query
+          name: fechaDesde
+          schema: { type: string, format: date }
+          description: Fecha inicial (YYYY-MM-DD)
+        - in: query
+          name: fechaHasta
+          schema: { type: string, format: date }
+          description: Fecha final (YYYY-MM-DD)
+        - in: query
+          name: idEmpresa
+          schema: { type: integer }
+          required: true
+          description: ID de empresa
+        - in: query
+          name: top
+          schema: { type: integer, default: 10, minimum: 1, maximum: 100 }
+          description: Cantidad de ítems a devolver
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  top:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        itemId: { type: integer }
+                        nombre: { type: string, nullable: true }
+                        cantidad: { type: number }
+                  total_items: { type: integer }
+                  rango:
+                    type: object
+                    properties:
+                      fechaDesde: { type: string, format: date, nullable: true }
+                      fechaHasta: { type: string, format: date, nullable: true }
+                  idEmpresa: { type: integer }
+        "4XX":
+          description: Error del cliente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DuxError"
+        "5XX":
+          description: Error del servidor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DuxError"
 
   # ----------------- POST (operaciones) -----------------
 
@@ -634,62 +692,4 @@ paths:
           content:
             application/json: { schema: { $ref: "#/components/schemas/DuxOk" } }
 
-  /analytics/top-vendidos:
-  get:
-    operationId: analytics_top_vendidos
-    tags: [Analytics]
-    summary: Top productos vendidos (agregado en el bridge)
-    parameters:
-      - in: query
-        name: fechaDesde
-        schema: { type: string, format: date }
-        description: Fecha inicial (YYYY-MM-DD)
-      - in: query
-        name: fechaHasta
-        schema: { type: string, format: date }
-        description: Fecha final (YYYY-MM-DD)
-      - in: query
-        name: idEmpresa
-        schema: { type: integer }
-        required: true
-        description: ID de empresa
-      - in: query
-        name: top
-        schema: { type: integer, default: 10, minimum: 1, maximum: 100 }
-        description: Cantidad de ítems a devolver
-    responses:
-      "200":
-        description: OK
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                top:
-                  type: array
-                  items:
-                    type: object
-                    properties:
-                      itemId: { type: integer }
-                      nombre: { type: string, nullable: true }
-                      cantidad: { type: number }
-                total_items: { type: integer }
-                rango:
-                  type: object
-                  properties:
-                    fechaDesde: { type: string, format: date, nullable: true }
-                    fechaHasta: { type: string, format: date, nullable: true }
-                idEmpresa: { type: integer }
-      "4XX":
-        description: Error del cliente
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/DuxError"
-      "5XX":
-        description: Error del servidor
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/DuxError"
 
