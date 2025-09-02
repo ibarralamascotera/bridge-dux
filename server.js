@@ -257,98 +257,169 @@ function getIdemKey(req) {
   return req.headers['idempotency-key'] || req.body?.externalId || null;
 }
 
-// GET /analytics/top-vendidos?fechaDesde=YYYY-MM-DD&fechaHasta=YYYY-MM-DD&idEmpresa=####&top=5&source=pedidos|facturas
+// GET /analytics/top-vendidos?fechaDesde=YYYY-MM-DD&fechaHasta=YYYY-MM-DD&idEmpresa=####&idSucursal=##&top=5&source=facturas|pedidos&estado=...
 app.get('/analytics/top-vendidos', async (req, res) => {
   try {
-    const { idEmpresa } = req.query;
-    const top = Math.max(1, Math.min(100, Number(req.query.top) || 10));
-    const source = (req.query.source || 'facturas').toLowerCase(); // default "facturas" es más fiable
-    const fechaDesde = normalizeDate(req.query.fechaDesde); // a DD/MM/YYYY si viene YYYY-MM-DD
-    const fechaHasta = normalizeDate(req.query.fechaHasta);
+    const {
+      fechaDesde,
+      fechaHasta,
+      idEmpresa,
+      idSucursal,
+      top: topRaw,
+      source: sourceRaw,
+      estado, // opcional (por si tu Dux exige estado particular)
+      ...rest // cualquier otro filtro que quieras pasar
+    } = req.query;
+
+    const top = Math.max(1, Math.min(100, Number(topRaw) || 10));
+    const source = (sourceRaw || 'facturas').toLowerCase(); // 'facturas' | 'pedidos'
 
     if (!idEmpresa) {
       return res.status(400).json({ error: 'Falta idEmpresa' });
     }
+    if (!fechaDesde || !fechaHasta) {
+      return res.status(400).json({ error: 'Faltan fechas: fechaDesde y fechaHasta' });
+    }
 
+    // Endpoint Dux según source
+    const duxPath = source === 'pedidos' ? '/pedidos' : '/facturas';
+
+    // Paginado
     const pageSize = 200;
     let offset = 0;
-    const acc = new Map(); // itemId -> { cantidad, nombre? }
 
-    const remotePath = source === 'pedidos' ? '/pedidos' : '/facturas';
+    // Acumulador: itemId -> { cantidad, nombre }
+    const acumulado = new Map();
 
+    // Helpers para detectar nombre de arreglo de renglones y campos
+    const pickLinesArray = (obj) => {
+      const candidates = [
+        'items', 'detalle', 'detalles', 'renglones',
+        'detalleFactura', 'detallePedido', 'lineas', 'lineItems'
+      ];
+      for (const k of candidates) {
+        const v = obj?.[k];
+        if (Array.isArray(v) && v.length >= 0) return v;
+      }
+      // Si hay un único array grande en el objeto, úsalo como último recurso
+      for (const [k, v] of Object.entries(obj || {})) {
+        if (Array.isArray(v) && v.length && typeof v[0] === 'object') return v;
+      }
+      return [];
+    };
+
+    const pickItemId = (line) => {
+      return (
+        line.itemId ??
+        line.idItem ??
+        line.idArticulo ??
+        line.articuloId ??
+        line.id ??
+        null
+      );
+    };
+
+    const pickCantidad = (line) => {
+      const n =
+        line.cantidad ??
+        line.cant ??
+        line.cantidadFacturada ??
+        line.unidades ??
+        line.qty ??
+        0;
+      return Number(n) || 0;
+    };
+
+    const pickNombre = (line) => {
+      return (
+        line.descripcion ??
+        line.descArticulo ??
+        line.nombre ??
+        line.detalle ??
+        null
+      );
+    };
+
+    // Bucle de paginado
+    let firstRecordKeys = null;
     while (true) {
       const params = {
-        idEmpresa,
+        // filtros básicos
         fechaDesde,
         fechaHasta,
+        idEmpresa,
+        // si viene idSucursal, lo mandamos
+        ...(idSucursal ? { idSucursal } : {}),
+
+        // filtros opcionales que tu instancia pueda requerir
+        ...(estado ? { estado } : {}),
+
+        // paginado
         limit: pageSize,
-        offset
-        // si tu WS requiere sucursal/deposito/estado, agregalos acá:
-        // idSucursal: req.query.idSucursal,
-        // idDeposito: req.query.idDeposito,
-        // estado: req.query.estado,
+        offset,
+
+        // y cualquier otro query que haya venido
+        ...rest,
       };
 
-      const page = await callDux(remotePath, { method: 'GET', params });
+      const page = await callDux(duxPath, { method: 'GET', params });
 
-      // Normalizar colección raíz
-      const registros =
-        Array.isArray(page)
-          ? page
-          : page?.data || page?.pedidos || page?.facturas || page?.items || [];
+      // Normalizamos listado de documentos
+      const docs = Array.isArray(page)
+        ? page
+        : (page?.data || page?.result || page?.facturas || page?.pedidos || []);
 
-      if (!registros.length) break;
+      if (!docs.length) break;
 
-      for (const r of registros) {
-        // Normalizar líneas de detalle
-        const lineas =
-          r.detalle ||
-          r.items ||
-          r.renglones ||
-          r.detalleFactura ||
-          r.detallePedido ||
-          [];
+      // Guardamos claves del primer doc para debug
+      if (!firstRecordKeys && docs[0] && typeof docs[0] === 'object') {
+        firstRecordKeys = Object.keys(docs[0]).slice(0, 30);
+      }
 
-        for (const it of lineas) {
-          const itemId = it.itemId ?? it.idItem ?? it.id ?? it.codigo ?? it.articuloId;
-          // normalizar cantidad (preferí la facturada si existe)
-          const cantidad =
-            num(it.cantidadFacturada) ??
-            num(it.cantidad) ??
-            num(it.cant) ??
-            num(it.cantidadPedida) ??
-            0;
+      for (const doc of docs) {
+        const lineas = pickLinesArray(doc);
+        if (!lineas || !lineas.length) continue;
 
-          if (!itemId || !cantidad) continue;
+        for (const ln of lineas) {
+          const itemId = pickItemId(ln);
+          const cant = pickCantidad(ln);
+          if (!itemId || !cant) continue;
 
-          const nombre = it.descripcion || it.nombre || it.detalle || it.itemNombre || null;
-          const prev = acc.get(itemId) || { cantidad: 0, nombre: null };
-          prev.cantidad += cantidad;
-          if (!prev.nombre && nombre) prev.nombre = nombre;
-          acc.set(itemId, prev);
+          const prev = acumulado.get(itemId) || { cantidad: 0, nombre: pickNombre(ln) };
+          prev.cantidad += cant;
+          if (!prev.nombre) prev.nombre = pickNombre(ln);
+          acumulado.set(itemId, prev);
         }
       }
 
-      if (registros.length < pageSize) break;
+      if (docs.length < pageSize) break;
       offset += pageSize;
     }
 
-    const ranking = [...acc.entries()]
-      .map(([itemId, info]) => ({ itemId, nombre: info.nombre || null, cantidad: info.cantidad }))
+    // Ordenamos y top N
+    const ranking = Array.from(acumulado.entries())
+      .map(([itemId, info]) => ({ itemId, ...info }))
       .sort((a, b) => b.cantidad - a.cantidad)
       .slice(0, top);
 
     res.json({
       top: ranking,
-      total_items: acc.size,
+      total_items: acumulado.size,
       rango: { fechaDesde, fechaHasta },
       idEmpresa: String(idEmpresa),
-      source
+      ...(idSucursal ? { idSucursal: String(idSucursal) } : {}),
+      source,
+      debug_sample: firstRecordKeys ? { first_record_keys: firstRecordKeys } : undefined
     });
   } catch (e) {
-    res.status(502).json({ error: 'Error calculando top vendidos', detail: String(e?.message || e) });
+    // Si Dux respondió 404/401 etc., callDux ya envolvió el error
+    res.status(e.status || 502).json({
+      error: 'Error en analytics/top-vendidos',
+      detail: e.message || String(e)
+    });
   }
 });
+
 
 // Helpers
 function normalizeDate(s) {
