@@ -2,6 +2,7 @@
 import 'dotenv/config';
 import express from 'express';
 import morgan from 'morgan';
+import compression from 'compression';
 import axios from 'axios';
 import PQueue from 'p-queue';
 import fs from 'fs';
@@ -90,6 +91,14 @@ app.get('/openapi.yaml', (_req, res) => {
     res.status(404).send('# openapi.yaml no encontrado');
   }
 });
+
+// === Middlewares ===
+app.use(compression());                         // <- gzip
+app.use(express.json({ limit: '1mb' }));
+app.use(morgan('tiny'));
+
+// Límite seguro para Actions (ajustá si querés)
+const MAX_ACTIONS_ROWS = Number(process.env.MAX_ACTIONS_ROWS || 20);
 
 // === Middleware de auth (se aplica a lo demás) ===
 app.use((req, res, next) => {
@@ -198,16 +207,53 @@ async function callDux(path, { method = 'GET', data, params } = {}) {
 
 
 // === Helper para GET de passthrough con req.query ===
-function makeGetProxy(localPath, duxPath) {
+
+function clampListParams(q) {
+  const limit = Math.max(1, Math.min(MAX_ACTIONS_ROWS, Number(q.limit) || MAX_ACTIONS_ROWS));
+  const offset = Math.max(0, Number(q.offset) || 0);
+  return { limit, offset };
+}
+
+function projectFields(row, fieldsCsv) {
+  if (!fieldsCsv) return row;
+  const wanted = fieldsCsv.split(',').map(s => s.trim()).filter(Boolean);
+  const out = {};
+  for (const k of wanted) if (k in row) out[k] = row[k];
+  return out;
+}
+
+
+function makeGetProxy(localPath, duxPath, { defaultFields = null } = {}) {
   app.get(localPath, async (req, res) => {
     try {
-      const data = await callDux(duxPath, { method: 'GET', params: req.query });
-      res.json(data);
+      // parámetros normalizados
+      const { limit, offset } = clampListParams(req.query);
+      const params = { ...req.query, limit, offset };
+
+      const data = await callDux(duxPath, { method: 'GET', params });
+
+      // si no viene array directo, intenta localizar la lista
+      const rows = Array.isArray(data) ? data :
+                   (Array.isArray(data?.data) ? data.data :
+                   (Array.isArray(data?.results) ? data.results :
+                   (Array.isArray(data?.pedidos) ? data.pedidos :
+                   (Array.isArray(data?.facturas) ? data.facturas : []))));
+
+      // compact/fields
+      const useCompact = String(req.query.compact || '0') === '1';
+      const fields = req.query.fields || (useCompact ? defaultFields : null);
+
+      const out = fields
+        ? rows.map(r => projectFields(r, fields))
+        : rows;
+
+      res.json(out);
     } catch (e) {
       res.status(502).json({ error: `Error consultando Dux ${duxPath}`, detail: e.message });
     }
   });
 }
+
 
 // === Endpoints GET (consulta) ===
 // Usá query params tal cual los pida Dux. Ej: ?offset=0&limit=20
