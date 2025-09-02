@@ -500,7 +500,7 @@ paths:
         schema:
           type: string
           enum: [pedidos, facturas]
-        description: Origen de datos; default "pedidos".
+        description: Origen de datos; default "facturas".
 
       responses:
         "200":

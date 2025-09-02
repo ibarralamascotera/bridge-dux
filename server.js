@@ -257,168 +257,137 @@ function getIdemKey(req) {
   return req.headers['idempotency-key'] || req.body?.externalId || null;
 }
 
-// GET /analytics/top-vendidos?fechaDesde=YYYY-MM-DD&fechaHasta=YYYY-MM-DD&idEmpresa=####&idSucursal=##&top=5&source=facturas|pedidos&estado=...
+// GET /analytics/top-vendidos?fechaDesde=YYYY-MM-DD&fechaHasta=YYYY-MM-DD&idEmpresa=####&idSucursal=##&top=5&source=facturas|pedidos
 app.get('/analytics/top-vendidos', async (req, res) => {
   try {
-    const {
-      fechaDesde,
-      fechaHasta,
-      idEmpresa,
-      idSucursal,
-      top: topRaw,
-      source: sourceRaw,
-      estado, // opcional (por si tu Dux exige estado particular)
-      ...rest // cualquier otro filtro que quieras pasar
-    } = req.query;
-
-    const top = Math.max(1, Math.min(100, Number(topRaw) || 10));
-    const source = (sourceRaw || 'facturas').toLowerCase(); // 'facturas' | 'pedidos'
+    const { fechaDesde, fechaHasta, idEmpresa, idSucursal } = req.query;
+    const source = (req.query.source || 'facturas').toLowerCase(); // 'facturas' | 'pedidos'
+    const top = Math.max(1, Math.min(100, Number(req.query.top) || 10));
+    const pageSize = Math.max(50, Math.min(500, Number(req.query.pageSize) || 200));
 
     if (!idEmpresa) {
       return res.status(400).json({ error: 'Falta idEmpresa' });
     }
-    if (!fechaDesde || !fechaHasta) {
-      return res.status(400).json({ error: 'Faltan fechas: fechaDesde y fechaHasta' });
-    }
 
-    // Endpoint Dux según source
     const duxPath = source === 'pedidos' ? '/pedidos' : '/facturas';
 
-    // Paginado
-    const pageSize = 200;
-    let offset = 0;
-
-    // Acumulador: itemId -> { cantidad, nombre }
-    const acumulado = new Map();
-
-    // Helpers para detectar nombre de arreglo de renglones y campos
-    const pickLinesArray = (obj) => {
+    // Helpers de normalización
+    const pickDetailArray = (row) => {
+      if (!row || typeof row !== 'object') return [];
+      // candidatos más comunes
       const candidates = [
-        'items', 'detalle', 'detalles', 'renglones',
-        'detalleFactura', 'detallePedido', 'lineas', 'lineItems'
+        'detalle', 'detalles', 'renglones', 'items', 'lineas', 'líneas',
+        'detalleFactura', 'detalle_factura', 'renglon', 'productos', 'articulos'
       ];
       for (const k of candidates) {
-        const v = obj?.[k];
-        if (Array.isArray(v) && v.length >= 0) return v;
+        if (Array.isArray(row[k])) return row[k];
       }
-      // Si hay un único array grande en el objeto, úsalo como último recurso
-      for (const [k, v] of Object.entries(obj || {})) {
-        if (Array.isArray(v) && v.length && typeof v[0] === 'object') return v;
+      // si alguna key apunta a array de objetos, tomarla
+      for (const [k, v] of Object.entries(row)) {
+        if (Array.isArray(v) && v.length && typeof v[0] === 'object') {
+          return v;
+        }
       }
       return [];
     };
 
-    const pickItemId = (line) => {
-      return (
-        line.itemId ??
-        line.idItem ??
-        line.idArticulo ??
-        line.articuloId ??
-        line.id ??
-        null
-      );
+    const pickItemId = (it) =>
+      it.itemId ?? it.idItem ?? it.idArticulo ?? it.articuloId ?? it.id ?? it.codigoArticulo ?? null;
+
+    const pickCantidad = (it) => {
+      const candidates = [
+        it.cantidad, it.cant, it.cantidadFacturada, it.cantidadVendida, it.unidades
+      ];
+      for (const v of candidates) {
+        const n = Number(v);
+        if (!Number.isNaN(n) && n) return n;
+      }
+      return 0;
     };
 
-    const pickCantidad = (line) => {
-      const n =
-        line.cantidad ??
-        line.cant ??
-        line.cantidadFacturada ??
-        line.unidades ??
-        line.qty ??
-        0;
-      return Number(n) || 0;
-    };
+    const pickNombre = (it) =>
+      it.descripcion ?? it.nombre ?? it.detalle ?? it.descripcionArticulo ?? it.nombreArticulo ?? null;
 
-    const pickNombre = (line) => {
-      return (
-        line.descripcion ??
-        line.descArticulo ??
-        line.nombre ??
-        line.detalle ??
-        null
-      );
-    };
+    // Acumulador
+    const acumulado = new Map(); // itemId -> { cantidad, nombre }
+    let offset = 0;
+    let totalFilas = 0;
+    let firstRowKeys = null;
+    let firstLineKeys = null;
 
-    // Bucle de paginado
-    let firstRecordKeys = null;
     while (true) {
       const params = {
-        // filtros básicos
-        fechaDesde,
-        fechaHasta,
         idEmpresa,
-        // si viene idSucursal, lo mandamos
-        ...(idSucursal ? { idSucursal } : {}),
-
-        // filtros opcionales que tu instancia pueda requerir
-        ...(estado ? { estado } : {}),
-
-        // paginado
         limit: pageSize,
         offset,
-
-        // y cualquier otro query que haya venido
-        ...rest,
+        ...(fechaDesde ? { fechaDesde } : {}),
+        ...(fechaHasta ? { fechaHasta } : {}),
+        ...(idSucursal ? { idSucursal } : {}),
       };
 
       const page = await callDux(duxPath, { method: 'GET', params });
 
-      // Normalizamos listado de documentos
-      const docs = Array.isArray(page)
-        ? page
-        : (page?.data || page?.result || page?.facturas || page?.pedidos || []);
+      // Normalizar listado raíz
+      const rows =
+        Array.isArray(page)
+          ? page
+          : (page?.data || page?.facturas || page?.pedidos || page?.resultado || []);
 
-      if (!docs.length) break;
+      if (!rows.length) break;
 
-      // Guardamos claves del primer doc para debug
-      if (!firstRecordKeys && docs[0] && typeof docs[0] === 'object') {
-        firstRecordKeys = Object.keys(docs[0]).slice(0, 30);
+      totalFilas += rows.length;
+      if (!firstRowKeys && rows[0] && typeof rows[0] === 'object') {
+        firstRowKeys = Object.keys(rows[0]);
       }
 
-      for (const doc of docs) {
-        const lineas = pickLinesArray(doc);
-        if (!lineas || !lineas.length) continue;
-
-        for (const ln of lineas) {
-          const itemId = pickItemId(ln);
-          const cant = pickCantidad(ln);
+      for (const row of rows) {
+        const detalle = pickDetailArray(row);
+        if (detalle.length && !firstLineKeys && typeof detalle[0] === 'object') {
+          firstLineKeys = Object.keys(detalle[0]);
+        }
+        for (const it of detalle) {
+          const itemId = pickItemId(it);
+          const cant = pickCantidad(it);
           if (!itemId || !cant) continue;
 
-          const prev = acumulado.get(itemId) || { cantidad: 0, nombre: pickNombre(ln) };
+          const prev = acumulado.get(itemId) || { cantidad: 0, nombre: pickNombre(it) };
           prev.cantidad += cant;
-          if (!prev.nombre) prev.nombre = pickNombre(ln);
+          if (!prev.nombre) prev.nombre = pickNombre(it);
           acumulado.set(itemId, prev);
         }
       }
 
-      if (docs.length < pageSize) break;
+      if (rows.length < pageSize) break;
       offset += pageSize;
     }
 
-    // Ordenamos y top N
-    const ranking = Array.from(acumulado.entries())
-      .map(([itemId, info]) => ({ itemId, ...info }))
+    // Armar ranking
+    const ranking = [...acumulado.entries()]
+      .map(([itemId, v]) => ({ itemId, nombre: v.nombre || null, cantidad: v.cantidad }))
       .sort((a, b) => b.cantidad - a.cantidad)
       .slice(0, top);
 
     res.json({
       top: ranking,
       total_items: acumulado.size,
+      filas_procesadas: totalFilas,
       rango: { fechaDesde, fechaHasta },
       idEmpresa: String(idEmpresa),
       ...(idSucursal ? { idSucursal: String(idSucursal) } : {}),
       source,
-      debug_sample: firstRecordKeys ? { first_record_keys: firstRecordKeys } : undefined
+      debug_sample: {
+        first_row_keys: firstRowKeys || [],
+        first_line_keys: firstLineKeys || []
+      }
     });
   } catch (e) {
-    // Si Dux respondió 404/401 etc., callDux ya envolvió el error
-    res.status(e.status || 502).json({
-      error: 'Error en analytics/top-vendidos',
-      detail: e.message || String(e)
+    res.status(502).json({
+      error: 'Error calculando top-vendidos',
+      detail: String(e?.message || e)
     });
   }
 });
+
 
 
 // Helpers
