@@ -257,6 +257,67 @@ function getIdemKey(req) {
   return req.headers['idempotency-key'] || req.body?.externalId || null;
 }
 
+// GET /analytics/top-vendidos?fechaDesde=YYYY-MM-DD&fechaHasta=YYYY-MM-DD&idEmpresa=####&top=5
+app.get('/analytics/top-vendidos', async (req, res) => {
+  try {
+    const { fechaDesde, fechaHasta, idEmpresa } = req.query;
+    const top = Math.max(1, Math.min(100, Number(req.query.top) || 10));
+
+    if (!idEmpresa) {
+      return res.status(400).json({ error: 'Falta idEmpresa' });
+    }
+
+    // paginado contra Dux
+    const pageSize = 200; // tamaño cómodo
+    let offset = 0;
+    const acumulado = new Map(); // itemId -> { cantidad, nombre? }
+
+    while (true) {
+      const params = {
+        fechaDesde,
+        fechaHasta,
+        idEmpresa,
+        limit: pageSize,
+        offset
+      };
+
+      const page = await callDux('/pedidos', { method: 'GET', params });
+
+      // Ajustá según el formato real que devuelve Dux
+      const pedidos = Array.isArray(page) ? page : (page?.data || page?.pedidos || []);
+      if (!pedidos.length) break;
+
+      for (const p of pedidos) {
+        const items = p.items || p.detalle || [];
+        for (const it of items) {
+          const itemId = it.itemId ?? it.idItem ?? it.id; // normaliza posible nombre
+          const cant = Number(it.cantidad ?? it.cant ?? 0) || 0;
+          if (!itemId || !cant) continue;
+
+          const prev = acumulado.get(itemId) || { cantidad: 0, nombre: it.descripcion || it.nombre || null };
+          prev.cantidad += cant;
+          if (!prev.nombre && (it.descripcion || it.nombre)) prev.nombre = it.descripcion || it.nombre;
+          acumulado.set(itemId, prev);
+        }
+      }
+
+      if (pedidos.length < pageSize) break;
+      offset += pageSize;
+    }
+
+    // ordenar y recortar top
+    const ranking = [...acumulado.entries()]
+      .map(([itemId, info]) => ({ itemId, nombre: info.nombre, cantidad: info.cantidad }))
+      .sort((a, b) => b.cantidad - a.cantidad)
+      .slice(0, top);
+
+    res.json({ top: ranking, total_items: acumulado.size, rango: { fechaDesde, fechaHasta }, idEmpresa });
+  } catch (e) {
+    res.status(502).json({ error: 'Error calculando top vendidos', detail: String(e?.message || e) });
+  }
+});
+
+
 // Ruta de prueba (no pega a Dux)
 app.post('/tests/idem', async (req, res) => {
   try {
