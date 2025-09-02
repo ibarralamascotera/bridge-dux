@@ -182,52 +182,91 @@ paths:
       summary: Lista facturas
       parameters:
         - in: query
+          name: idEmpresa
+          required: true
+          schema: { type: integer }
+          description: ID de la empresa.
+        - in: query
+          name: idSucursal
+          required: false
+          schema: { type: integer }
+          description: ID de sucursal (opcional).
+        - in: query
           name: fechaDesde
-          schema: { type: string }
+          required: false
+          schema: { type: string, format: date }
+          description: Desde (YYYY-MM-DD).
         - in: query
           name: fechaHasta
-          schema: { type: string }
-        - in: query
-          name: idEmpresa
-          schema: { type: integer }
+          required: false
+          schema: { type: string, format: date }
+          description: Hasta (YYYY-MM-DD).
         - in: query
           name: limit
-          schema: { type: integer, default: 20 }
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 50 }
+          description: Tamaño de página.
         - in: query
           name: offset
-          schema: { type: integer, default: 0 }
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+          description: Desplazamiento.
       responses:
         "200":
           description: OK
           content:
-            application/json: { schema: { $ref: "#/components/schemas/DuxOk" } }
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DuxOk"
+        "4XX":
+          description: Error del cliente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DuxError"
+        "5XX":
+          description: Error del servidor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DuxError"
 
   /duxc/pedidos:
     get:
       operationId: listar_pedidos
       tags: [Ventas]
-      summary: Lista pedidos (paginado)
+      summary: Lista pedidos
       parameters:
         - in: query
+          name: idEmpresa
+          required: true
+          schema: { type: integer }
+          description: ID de la empresa.
+        - in: query
+          name: idSucursal
+          required: false
+          schema: { type: integer }
+          description: ID de sucursal (opcional).
+        - in: query
           name: fechaDesde
+          required: false
           schema: { type: string, format: date }
-          description: Fecha inicial (YYYY-MM-DD)
+          description: Desde (YYYY-MM-DD).
         - in: query
           name: fechaHasta
+          required: false
           schema: { type: string, format: date }
-          description: Fecha final (YYYY-MM-DD)
-        - in: query
-          name: idEmpresa
-          schema: { type: integer }
-          description: ID de empresa (obligatorio para Dux)
+          description: Hasta (YYYY-MM-DD).
         - in: query
           name: limit
-          schema: { type: integer, default: 50, minimum: 1, maximum: 1000 }
-          description: Cantidad por página
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 50 }
+          description: Tamaño de página.
         - in: query
           name: offset
-          schema: { type: integer, default: 0, minimum: 0 }
-          description: Desplazamiento
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+          description: Desplazamiento.
       responses:
         "200":
           description: OK
@@ -356,13 +395,31 @@ paths:
       parameters:
         - in: query
           name: limit
-          schema: { type: integer, default: 50 }
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 50 }
+          description: Tamaño de página.
         - in: query
           name: offset
-          schema: { type: integer, default: 0 }
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+          description: Desplazamiento.
         - in: query
           name: buscar
+          required: false
           schema: { type: string }
+          description: Texto de búsqueda (opcional).
+        # Si corresponde:
+        - in: query
+          name: idDeposito
+          required: false
+          schema: { type: integer }
+          description: Filtro por depósito (opcional).
+        - in: query
+          name: idSucursal
+          required: false
+          schema: { type: integer }
+          description: Filtro por sucursal (opcional).
+
       responses:
         "200":
           description: OK
@@ -410,30 +467,41 @@ paths:
           description: OK
           content:
             application/json: { schema: { $ref: "#/components/schemas/DuxOk" } }
-            
+
   /analytics/top-vendidos:
     get:
       operationId: analytics_top_vendidos
       tags: [Analytics]
       summary: Top productos vendidos (agregado en el bridge)
       parameters:
-        - in: query
-          name: fechaDesde
-          schema: { type: string, format: date }
-          description: Fecha inicial (YYYY-MM-DD)
-        - in: query
-          name: fechaHasta
-          schema: { type: string, format: date }
-          description: Fecha final (YYYY-MM-DD)
-        - in: query
-          name: idEmpresa
-          schema: { type: integer }
-          required: true
-          description: ID de empresa
-        - in: query
-          name: top
-          schema: { type: integer, default: 10, minimum: 1, maximum: 100 }
-          description: Cantidad de ítems a devolver
+      - in: query
+        name: idEmpresa
+        required: true
+        schema: { type: integer }
+      - in: query
+        name: idSucursal
+        required: false
+        schema: { type: integer }
+      - in: query
+        name: fechaDesde
+        required: false
+        schema: { type: string, format: date }
+      - in: query
+        name: fechaHasta
+        required: false
+        schema: { type: string, format: date }
+      - in: query
+        name: top
+        required: false
+        schema: { type: integer, minimum: 1, maximum: 100, default: 10 }
+      - in: query
+        name: source
+        required: false
+        schema:
+          type: string
+          enum: [pedidos, facturas]
+        description: Origen de datos; default "pedidos".
+
       responses:
         "200":
           description: OK

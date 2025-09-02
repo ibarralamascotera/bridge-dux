@@ -9,7 +9,7 @@ import fs from 'fs';
 const DUX_PATHS = {
   items: '/items',
   compras: '/compras',
-  depositos: '/depositos',        // antes estaba '/deposito'
+  depositos: '/deposito',        // antes estaba '/deposito'
   empresas: '/empresas',
   facturas: '/facturas',
   pedidos: '/pedidos',
@@ -257,65 +257,114 @@ function getIdemKey(req) {
   return req.headers['idempotency-key'] || req.body?.externalId || null;
 }
 
-// GET /analytics/top-vendidos?fechaDesde=YYYY-MM-DD&fechaHasta=YYYY-MM-DD&idEmpresa=####&top=5
+// GET /analytics/top-vendidos?fechaDesde=YYYY-MM-DD&fechaHasta=YYYY-MM-DD&idEmpresa=####&top=5&source=pedidos|facturas
 app.get('/analytics/top-vendidos', async (req, res) => {
   try {
-    const { fechaDesde, fechaHasta, idEmpresa } = req.query;
+    const { idEmpresa } = req.query;
     const top = Math.max(1, Math.min(100, Number(req.query.top) || 10));
+    const source = (req.query.source || 'facturas').toLowerCase(); // default "facturas" es más fiable
+    const fechaDesde = normalizeDate(req.query.fechaDesde); // a DD/MM/YYYY si viene YYYY-MM-DD
+    const fechaHasta = normalizeDate(req.query.fechaHasta);
 
     if (!idEmpresa) {
       return res.status(400).json({ error: 'Falta idEmpresa' });
     }
 
-    // paginado contra Dux
-    const pageSize = 200; // tamaño cómodo
+    const pageSize = 200;
     let offset = 0;
-    const acumulado = new Map(); // itemId -> { cantidad, nombre? }
+    const acc = new Map(); // itemId -> { cantidad, nombre? }
+
+    const remotePath = source === 'pedidos' ? '/pedidos' : '/facturas';
 
     while (true) {
       const params = {
+        idEmpresa,
         fechaDesde,
         fechaHasta,
-        idEmpresa,
         limit: pageSize,
         offset
+        // si tu WS requiere sucursal/deposito/estado, agregalos acá:
+        // idSucursal: req.query.idSucursal,
+        // idDeposito: req.query.idDeposito,
+        // estado: req.query.estado,
       };
 
-      const page = await callDux('/pedidos', { method: 'GET', params });
+      const page = await callDux(remotePath, { method: 'GET', params });
 
-      // Ajustá según el formato real que devuelve Dux
-      const pedidos = Array.isArray(page) ? page : (page?.data || page?.pedidos || []);
-      if (!pedidos.length) break;
+      // Normalizar colección raíz
+      const registros =
+        Array.isArray(page)
+          ? page
+          : page?.data || page?.pedidos || page?.facturas || page?.items || [];
 
-      for (const p of pedidos) {
-        const items = p.items || p.detalle || [];
-        for (const it of items) {
-          const itemId = it.itemId ?? it.idItem ?? it.id; // normaliza posible nombre
-          const cant = Number(it.cantidad ?? it.cant ?? 0) || 0;
-          if (!itemId || !cant) continue;
+      if (!registros.length) break;
 
-          const prev = acumulado.get(itemId) || { cantidad: 0, nombre: it.descripcion || it.nombre || null };
-          prev.cantidad += cant;
-          if (!prev.nombre && (it.descripcion || it.nombre)) prev.nombre = it.descripcion || it.nombre;
-          acumulado.set(itemId, prev);
+      for (const r of registros) {
+        // Normalizar líneas de detalle
+        const lineas =
+          r.detalle ||
+          r.items ||
+          r.renglones ||
+          r.detalleFactura ||
+          r.detallePedido ||
+          [];
+
+        for (const it of lineas) {
+          const itemId = it.itemId ?? it.idItem ?? it.id ?? it.codigo ?? it.articuloId;
+          // normalizar cantidad (preferí la facturada si existe)
+          const cantidad =
+            num(it.cantidadFacturada) ??
+            num(it.cantidad) ??
+            num(it.cant) ??
+            num(it.cantidadPedida) ??
+            0;
+
+          if (!itemId || !cantidad) continue;
+
+          const nombre = it.descripcion || it.nombre || it.detalle || it.itemNombre || null;
+          const prev = acc.get(itemId) || { cantidad: 0, nombre: null };
+          prev.cantidad += cantidad;
+          if (!prev.nombre && nombre) prev.nombre = nombre;
+          acc.set(itemId, prev);
         }
       }
 
-      if (pedidos.length < pageSize) break;
+      if (registros.length < pageSize) break;
       offset += pageSize;
     }
 
-    // ordenar y recortar top
-    const ranking = [...acumulado.entries()]
-      .map(([itemId, info]) => ({ itemId, nombre: info.nombre, cantidad: info.cantidad }))
+    const ranking = [...acc.entries()]
+      .map(([itemId, info]) => ({ itemId, nombre: info.nombre || null, cantidad: info.cantidad }))
       .sort((a, b) => b.cantidad - a.cantidad)
       .slice(0, top);
 
-    res.json({ top: ranking, total_items: acumulado.size, rango: { fechaDesde, fechaHasta }, idEmpresa });
+    res.json({
+      top: ranking,
+      total_items: acc.size,
+      rango: { fechaDesde, fechaHasta },
+      idEmpresa: String(idEmpresa),
+      source
+    });
   } catch (e) {
     res.status(502).json({ error: 'Error calculando top vendidos', detail: String(e?.message || e) });
   }
 });
+
+// Helpers
+function normalizeDate(s) {
+  // si viene 'YYYY-MM-DD' => 'DD/MM/YYYY'; si ya viene 'DD/MM/YYYY' la deja.
+  if (!s) return s;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const [y, m, d] = s.split('-');
+    return `${d}/${m}/${y}`;
+  }
+  return s;
+}
+function num(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 
 
 // Ruta de prueba (no pega a Dux)
