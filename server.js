@@ -318,30 +318,22 @@ function getIdemKey(req) {
 app.get('/analytics/top-vendidos', async (req, res) => {
   try {
     const { fechaDesde, fechaHasta, idEmpresa, idSucursal } = req.query;
-    const source = (req.query.source || 'facturas').toLowerCase(); // 'facturas' | 'pedidos'
+    const source = (req.query.source || 'facturas').toLowerCase();
     const top = Math.max(1, Math.min(100, Number(req.query.top) || 10));
     const pageSize = Math.max(50, Math.min(500, Number(req.query.pageSize) || 200));
-
-    if (!idEmpresa) {
-      return res.status(400).json({ error: 'Falta idEmpresa' });
-    }
+    if (!idEmpresa) return res.status(400).json({ error: 'Falta idEmpresa' });
 
     const duxPath = source === 'pedidos' ? '/pedidos' : '/facturas';
 
-    // Helpers de normalización
     const pickDetailArray = (row) => {
       if (!row || typeof row !== 'object') return [];
       const candidates = [
         'detalle', 'detalles', 'renglones', 'items', 'lineas', 'líneas',
         'detalleFactura', 'detalle_factura', 'renglon', 'productos', 'articulos'
       ];
-      for (const k of candidates) {
-        if (Array.isArray(row[k])) return row[k];
-      }
-      for (const [k, v] of Object.entries(row)) {
-        if (Array.isArray(v) && v.length && typeof v[0] === 'object') {
-          return v;
-        }
+      for (const k of candidates) if (Array.isArray(row[k])) return row[k];
+      for (const [, v] of Object.entries(row)) {
+        if (Array.isArray(v) && v.length && typeof v[0] === 'object') return v;
       }
       return [];
     };
@@ -350,29 +342,23 @@ app.get('/analytics/top-vendidos', async (req, res) => {
       it.itemId ?? it.idItem ?? it.idArticulo ?? it.articuloId ?? it.id ?? it.codigoArticulo ?? it.cod_item ?? null;
 
     const pickCantidad = (it) => {
-      const candidates = [
-        it.cantidad, it.cant, it.cantidadFacturada, it.cantidadVendida, it.unidades, it.ctd
-      ];
-      for (const v of candidates) {
-        const n = Number(v);
-        if (!Number.isNaN(n) && n) return n;
-      }
+      const candidates = [it.cantidad, it.cant, it.cantidadFacturada, it.cantidadVendida, it.unidades, it.ctd];
+      for (const v of candidates) { const n = Number(v); if (!Number.isNaN(n) && n) return n; }
       return 0;
     };
 
     const pickNombre = (it) =>
       it.descripcion ?? it.nombre ?? it.detalle ?? it.descripcionArticulo ?? it.nombreArticulo ?? it.item ?? null;
 
-    // Acumulador
     const acumulado = new Map();
-    let offset = 0;
-    let totalFilas = 0;
-    let firstRowKeys = null;
-    let firstLineKeys = null;
+    let offset = 0, totalFilas = 0;
+    let firstRowKeys = null, firstLineKeys = null;
 
     while (true) {
-      const fDesde = normalizeDate(fechaDesde);
-      const fHasta = normalizeDate(fechaHasta);
+      // 👇 usar el mismo criterio que los proxies: convertir DD/MM → ISO, y dejar ISO como está
+      const fDesde = toIsoDateMaybe(fechaDesde);
+      const fHasta = toIsoDateMaybe(fechaHasta);
+
       const params = {
         idEmpresa,
         limit: pageSize,
@@ -384,17 +370,14 @@ app.get('/analytics/top-vendidos', async (req, res) => {
 
       const page = await callDux(duxPath, { method: 'GET', params });
 
-      const rows =
-        Array.isArray(page)
-          ? page
-          : (page?.data || page?.facturas || page?.pedidos || page?.resultado || page?.results || []);
+      const rows = Array.isArray(page)
+        ? page
+        : (page?.data || page?.facturas || page?.pedidos || page?.resultado || page?.results || []);
 
       if (!rows.length) break;
 
       totalFilas += rows.length;
-      if (!firstRowKeys && rows[0] && typeof rows[0] === 'object') {
-        firstRowKeys = Object.keys(rows[0]);
-      }
+      if (!firstRowKeys && rows[0] && typeof rows[0] === 'object') firstRowKeys = Object.keys(rows[0]);
 
       for (const row of rows) {
         const detalle = pickDetailArray(row);
@@ -405,7 +388,6 @@ app.get('/analytics/top-vendidos', async (req, res) => {
           const itemId = pickItemId(it);
           const cant = pickCantidad(it);
           if (!itemId || !cant) continue;
-
           const prev = acumulado.get(itemId) || { cantidad: 0, nombre: pickNombre(it) };
           prev.cantidad += cant;
           if (!prev.nombre) prev.nombre = pickNombre(it);
@@ -430,18 +412,13 @@ app.get('/analytics/top-vendidos', async (req, res) => {
       idEmpresa: String(idEmpresa),
       ...(idSucursal ? { idSucursal: String(idSucursal) } : {}),
       source,
-      debug_sample: {
-        first_row_keys: firstRowKeys || [],
-        first_line_keys: firstLineKeys || []
-      }
+      debug_sample: { first_row_keys: firstRowKeys || [], first_line_keys: firstLineKeys || [] }
     });
   } catch (e) {
-    res.status(502).json({
-      error: 'Error calculando top-vendidos',
-      detail: String(e?.message || e)
-    });
+    res.status(502).json({ error: 'Error calculando top-vendidos', detail: String(e?.message || e) });
   }
 });
+
 
 
 
