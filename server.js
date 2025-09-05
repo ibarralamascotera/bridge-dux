@@ -233,31 +233,39 @@ function projectFields(row, fieldsCsv) {
 function makeGetProxy(localPath, duxPath, { defaultFields = null } = {}) {
   app.get(localPath, async (req, res) => {
     try {
-      // parámetros normalizados
       const { limit, offset } = clampListParams(req.query);
 
       const params = { ...req.query, limit, offset };
       if ('fechaDesde' in params) params.fechaDesde = toIsoDateMaybe(params.fechaDesde);
       if ('fechaHasta' in params) params.fechaHasta = toIsoDateMaybe(params.fechaHasta);
 
-
       const data = await callDux(duxPath, { method: 'GET', params });
 
-      // si no viene array directo, intenta localizar la lista
+      // detectar lista raíz con más variantes
       const rows = Array.isArray(data) ? data :
                    (Array.isArray(data?.data) ? data.data :
                    (Array.isArray(data?.results) ? data.results :
                    (Array.isArray(data?.pedidos) ? data.pedidos :
                    (Array.isArray(data?.facturas) ? data.facturas :
-                   (Array.isArray(data?.compras) ? data.compras : [])))));
+                   (Array.isArray(data?.compras) ? data.compras :
+                   (Array.isArray(data?.lista) ? data.lista :
+                   (Array.isArray(data?.resultado) ? data.resultado : []))))));
 
-      // compact/fields
       const useCompact = String(req.query.compact || '0') === '1';
       const fields = req.query.fields || (useCompact ? defaultFields : null);
+      const out = fields ? rows.map(r => projectFields(r, fields)) : rows;
 
-      const out = fields
-        ? rows.map(r => projectFields(r, fields))
-        : rows;
+      // modo debug opcional
+      if (String(req.query.debug || '0') === '1') {
+        const shape = Array.isArray(data) ? ['array'] :
+                      (data && typeof data === 'object' ? Object.keys(data) : []);
+        const first = Array.isArray(rows) && rows.length && typeof rows[0] === 'object'
+          ? Object.keys(rows[0]) : [];
+        return res.json({
+          debug: { shape, first_row_keys: first, count: rows.length, duxPath, params },
+          rows: out
+        });
+      }
 
       res.json(out);
     } catch (e) {
@@ -265,6 +273,7 @@ function makeGetProxy(localPath, duxPath, { defaultFields = null } = {}) {
     }
   });
 }
+
 
 
 // === Endpoints GET (consulta) ===
