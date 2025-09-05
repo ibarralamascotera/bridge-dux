@@ -229,7 +229,6 @@ function projectFields(row, fieldsCsv) {
   return out;
 }
 
-
 function makeGetProxy(localPath, duxPath, { defaultFields = null } = {}) {
   app.get(localPath, async (req, res) => {
     try {
@@ -249,7 +248,7 @@ function makeGetProxy(localPath, duxPath, { defaultFields = null } = {}) {
                    (Array.isArray(data?.facturas) ? data.facturas :
                    (Array.isArray(data?.compras) ? data.compras :
                    (Array.isArray(data?.lista) ? data.lista :
-                   (Array.isArray(data?.resultado) ? data.resultado : []))))));
+                   (Array.isArray(data?.resultado) ? data.resultado : [])))))));
 
       const useCompact = String(req.query.compact || '0') === '1';
       const fields = req.query.fields || (useCompact ? defaultFields : null);
