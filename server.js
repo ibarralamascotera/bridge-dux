@@ -248,7 +248,8 @@ function makeGetProxy(localPath, duxPath, { defaultFields = null } = {}) {
                    (Array.isArray(data?.data) ? data.data :
                    (Array.isArray(data?.results) ? data.results :
                    (Array.isArray(data?.pedidos) ? data.pedidos :
-                   (Array.isArray(data?.facturas) ? data.facturas : []))));
+                   (Array.isArray(data?.facturas) ? data.facturas :
+                   (Array.isArray(data?.compras) ? data.compras : [])))));
 
       // compact/fields
       const useCompact = String(req.query.compact || '0') === '1';
