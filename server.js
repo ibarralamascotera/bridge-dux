@@ -26,6 +26,13 @@ const DUX_PATHS = {
 
 const app = express();
 const idemStore = new Map(); // key -> resultado
+function toIsoDateMaybe(s) {
+  if (typeof s !== 'string') return s;
+  // DD/MM/YYYY -> YYYY-MM-DD
+  const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  return s;
+}
 
 async function withIdempotency(key, handler) {
   if (!key) return handler(); // si no mandan clave, procesa normal
@@ -228,7 +235,11 @@ function makeGetProxy(localPath, duxPath, { defaultFields = null } = {}) {
     try {
       // parámetros normalizados
       const { limit, offset } = clampListParams(req.query);
+
       const params = { ...req.query, limit, offset };
+      if ('fechaDesde' in params) params.fechaDesde = toIsoDateMaybe(params.fechaDesde);
+      if ('fechaHasta' in params) params.fechaHasta = toIsoDateMaybe(params.fechaHasta);
+
 
       const data = await callDux(duxPath, { method: 'GET', params });
 
@@ -320,7 +331,6 @@ app.get('/analytics/top-vendidos', async (req, res) => {
     // Helpers de normalización
     const pickDetailArray = (row) => {
       if (!row || typeof row !== 'object') return [];
-      // candidatos más comunes
       const candidates = [
         'detalle', 'detalles', 'renglones', 'items', 'lineas', 'líneas',
         'detalleFactura', 'detalle_factura', 'renglon', 'productos', 'articulos'
@@ -328,7 +338,6 @@ app.get('/analytics/top-vendidos', async (req, res) => {
       for (const k of candidates) {
         if (Array.isArray(row[k])) return row[k];
       }
-      // si alguna key apunta a array de objetos, tomarla
       for (const [k, v] of Object.entries(row)) {
         if (Array.isArray(v) && v.length && typeof v[0] === 'object') {
           return v;
@@ -338,11 +347,11 @@ app.get('/analytics/top-vendidos', async (req, res) => {
     };
 
     const pickItemId = (it) =>
-      it.itemId ?? it.idItem ?? it.idArticulo ?? it.articuloId ?? it.id ?? it.codigoArticulo ?? null;
+      it.itemId ?? it.idItem ?? it.idArticulo ?? it.articuloId ?? it.id ?? it.codigoArticulo ?? it.cod_item ?? null;
 
     const pickCantidad = (it) => {
       const candidates = [
-        it.cantidad, it.cant, it.cantidadFacturada, it.cantidadVendida, it.unidades
+        it.cantidad, it.cant, it.cantidadFacturada, it.cantidadVendida, it.unidades, it.ctd
       ];
       for (const v of candidates) {
         const n = Number(v);
@@ -352,32 +361,33 @@ app.get('/analytics/top-vendidos', async (req, res) => {
     };
 
     const pickNombre = (it) =>
-      it.descripcion ?? it.nombre ?? it.detalle ?? it.descripcionArticulo ?? it.nombreArticulo ?? null;
+      it.descripcion ?? it.nombre ?? it.detalle ?? it.descripcionArticulo ?? it.nombreArticulo ?? it.item ?? null;
 
     // Acumulador
-    const acumulado = new Map(); // itemId -> { cantidad, nombre }
+    const acumulado = new Map();
     let offset = 0;
     let totalFilas = 0;
     let firstRowKeys = null;
     let firstLineKeys = null;
 
     while (true) {
+      const fDesde = normalizeDate(fechaDesde);
+      const fHasta = normalizeDate(fechaHasta);
       const params = {
         idEmpresa,
         limit: pageSize,
         offset,
-        ...(fechaDesde ? { fechaDesde } : {}),
-        ...(fechaHasta ? { fechaHasta } : {}),
+        ...(fDesde ? { fechaDesde: fDesde } : {}),
+        ...(fHasta ? { fechaHasta: fHasta } : {}),
         ...(idSucursal ? { idSucursal } : {}),
       };
 
       const page = await callDux(duxPath, { method: 'GET', params });
 
-      // Normalizar listado raíz
       const rows =
         Array.isArray(page)
           ? page
-          : (page?.data || page?.facturas || page?.pedidos || page?.resultado || []);
+          : (page?.data || page?.facturas || page?.pedidos || page?.resultado || page?.results || []);
 
       if (!rows.length) break;
 
@@ -407,7 +417,6 @@ app.get('/analytics/top-vendidos', async (req, res) => {
       offset += pageSize;
     }
 
-    // Armar ranking
     const ranking = [...acumulado.entries()]
       .map(([itemId, v]) => ({ itemId, nombre: v.nombre || null, cantidad: v.cantidad }))
       .sort((a, b) => b.cantidad - a.cantidad)
@@ -433,6 +442,7 @@ app.get('/analytics/top-vendidos', async (req, res) => {
     });
   }
 });
+
 
 
 
