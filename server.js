@@ -232,6 +232,7 @@ function projectFields(row, fieldsCsv) {
 function makeGetProxy(localPath, duxPath, { defaultFields = null } = {}) {
   app.get(localPath, async (req, res) => {
     try {
+      // parámetros normalizados
       const { limit, offset } = clampListParams(req.query);
 
       const params = { ...req.query, limit, offset };
@@ -240,31 +241,21 @@ function makeGetProxy(localPath, duxPath, { defaultFields = null } = {}) {
 
       const data = await callDux(duxPath, { method: 'GET', params });
 
-      // detectar lista raíz con más variantes
+      // si no viene array directo, intenta localizar la lista (incluye compras)
       const rows = Array.isArray(data) ? data :
-                   (Array.isArray(data?.data) ? data.data :
-                   (Array.isArray(data?.results) ? data.results :
-                   (Array.isArray(data?.pedidos) ? data.pedidos :
-                   (Array.isArray(data?.facturas) ? data.facturas :
-                   (Array.isArray(data?.compras) ? data.compras :
-                   (Array.isArray(data?.lista) ? data.lista :
+                   (Array.isArray(data?.data)      ? data.data      :
+                   (Array.isArray(data?.results)   ? data.results   :
+                   (Array.isArray(data?.pedidos)   ? data.pedidos   :
+                   (Array.isArray(data?.facturas)  ? data.facturas  :
+                   (Array.isArray(data?.compras)   ? data.compras   :
+                   (Array.isArray(data?.lista)     ? data.lista     :
                    (Array.isArray(data?.resultado) ? data.resultado : [])))))));
 
+      // compact/fields
       const useCompact = String(req.query.compact || '0') === '1';
       const fields = req.query.fields || (useCompact ? defaultFields : null);
-      const out = fields ? rows.map(r => projectFields(r, fields)) : rows;
 
-      // modo debug opcional
-      if (String(req.query.debug || '0') === '1') {
-        const shape = Array.isArray(data) ? ['array'] :
-                      (data && typeof data === 'object' ? Object.keys(data) : []);
-        const first = Array.isArray(rows) && rows.length && typeof rows[0] === 'object'
-          ? Object.keys(rows[0]) : [];
-        return res.json({
-          debug: { shape, first_row_keys: first, count: rows.length, duxPath, params },
-          rows: out
-        });
-      }
+      const out = fields ? rows.map(r => projectFields(r, fields)) : rows;
 
       res.json(out);
     } catch (e) {
@@ -272,6 +263,7 @@ function makeGetProxy(localPath, duxPath, { defaultFields = null } = {}) {
     }
   });
 }
+
 
 
 
